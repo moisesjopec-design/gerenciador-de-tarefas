@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Tarefas do Escritório</title>
+<meta name="theme-color" content="#0f6e6a"><link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Tarefas">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--bg:#f4f5f2;--card:#fff;--ink:#1c2530;--mut:#5f6b76;--line:#dcdfe0;--ac:#0f6e6a;--warn:#a86400;--bad:#b3261e;--ok:#2e7d4f;box-sizing:border-box;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+@media(prefers-color-scheme:dark){:root{--bg:#141a1f;--card:#1e262d;--ink:#e8ecee;--mut:#9aa6ae;--line:#33404a;--ac:#4fc1ba;--warn:#e5a445;--bad:#ff8a80;--ok:#6fcf97}}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:14px}
+.box{max-width:420px;margin:12vh auto;padding:22px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+h1,h2,h3{margin:0 0 10px;line-height:1.2}h2{font-size:1.3rem}h3{font-size:1.05rem}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{width:100%;padding:10px;margin:4px 0 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+input[type=checkbox]{width:auto;margin-right:8px}
+label{font-size:.9rem;color:var(--mut)}
+button{padding:10px 14px;border:1px solid var(--line);background:var(--card);border-radius:8px;cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+button.d{color:var(--bad)}
+:focus-visible{outline:3px solid var(--ac);outline-offset:2px}
+header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+header .sp{flex:1}
+nav{display:flex;gap:6px;margin-bottom:12px}
+nav button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:8px}
+.bar>div{flex:1;min-width:140px}
+.alert{background:var(--card);border:1px solid var(--warn);border-left:6px solid var(--warn);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.task{background:var(--card);border:1px solid var(--line);border-left:6px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px;cursor:pointer}
+.task.late{border-left-color:var(--bad)}.task.soon{border-left-color:var(--warn)}.task.done{border-left-color:var(--ok);opacity:.7}
+.task .r{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.meta{color:var(--mut);font-size:.88rem}
+.tag{font-size:.82rem;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid currentColor}
+.late .tag{color:var(--bad)}.soon .tag{color:var(--warn)}.done .tag{color:var(--ok)}.tag{color:var(--mut)}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+dialog{width:min(520px,94vw);border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);padding:18px}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.empty{text-align:center;color:var(--mut);padding:30px 10px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<dialog id="dlg"></dialog>
+<script>
+const $=s=>document.querySelector(s), FN='tarefas_escritorio.json',
+SC='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
+let CID=localStorage.getItem('cid')||'', D={users:[],setores:[],tarefas:[]}, fileId=null, tok=null, tokExp=0, ready=false, me=null;
+const S={v:'t',fs:'',fst:'',mine:false};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('esc:'+s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const norm=d=>{d=d||{};d.users??=[];d.setores??=[];d.tarefas??=[];return d};
+
+/* ---------- Google: login, Drive, Agenda ---------- */
+function getTok(){return new Promise((res,rej)=>{
+  if(tok&&Date.now()<tokExp)return res(tok);
+  if(!window.google)return rej(new Error('Script do Google não carregou'));
+  google.accounts.oauth2.initTokenClient({client_id:CID,scope:SC,callback:r=>{if(r.error)return rej(new Error(r.error));tok=r.access_token;tokExp=Date.now()+r.expires_in*1000-60000;res(tok)}}).requestAccessToken({prompt:tok?'':'consent'});
+})}
+async function api(u,o={}){const t=await getTok();const r=await fetch(u,{...o,headers:{Authorization:'Bearer '+t,...(o.headers||{})}});if(!r.ok)throw new Error('HTTP '+r.status);return r.status==204?null:r.json()}
+async function pull(){
+  if(!fileId){const q=encodeURIComponent(`name='${FN}' and trashed=false`);const l=await api(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);if(l.files.length)fileId=l.files[0].id}
+  if(fileId)D=norm(await api(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`));
+}
+async function save(){
+  if(!fileId){const b='bnd',body=`--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({name:FN,mimeType:'application/json'})}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(D)}\r\n--${b}--`;
+    fileId=(await api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body})).id}
+  else await api(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(D)});
+}
+async function mut(fn){try{await pull();fn();await save()}catch(e){alert('Não foi possível salvar: '+e.message+'. Tente sincronizar novamente.')}render()}
+async function agenda(t){
+  const u=D.users.find(x=>x.id===t.resp);if(!u||!u.email)return null;
+  const nx=new Date(t.venc+'T12:00:00Z');nx.setUTCDate(nx.getUTCDate()+1);
+  const ev={summary:'Tarefa: '+t.titulo,description:(t.desc||'')+'\nSetor: '+(D.setores.find(s=>s.id===t.setor)?.nome||'-'),start:{date:t.venc},end:{date:nx.toISOString().slice(0,10)},attendees:[{email:u.email}],reminders:{useDefault:false,overrides:[{method:'email',minutes:Math.max(t.lembrete,1)*1440},{method:'popup',minutes:Math.max(t.lembrete,1)*1440}]}};
+  const base='https://www.googleapis.com/calendar/v3/calendars/primary/events';
+  const r=await api(t.evId?`${base}/${t.evId}?sendUpdates=all`:`${base}?sendUpdates=all`,{method:t.evId?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ev)});
+  return r.id;
+}
+
+/* ---------- Regras ---------- */
+const days=v=>Math.round((new Date(v+'T00:00')-new Date().setHours(0,0,0,0))/864e5);
+const setor=id=>D.setores.find(s=>s.id===id)?.nome||'Sem setor', user=id=>D.users.find(u=>u.id===id)?.nome||'Sem responsável';
+const visible=()=>D.tarefas.filter(t=>me.admin||t.setor===me.setor||t.resp===me.id);
+const alerts=()=>D.tarefas.filter(t=>t.resp===me.id&&t.status!=='feito'&&days(t.venc)<=(t.lembrete??1)).sort((a,b)=>a.venc.localeCompare(b.venc));
+const label=t=>{if(t.status==='feito')return['done','Concluída'];const d=days(t.venc);return d<0?['late',`Atrasada ${-d}d`]:d===0?['soon','Vence hoje']:d<=(t.lembrete??1)?['soon',`Vence em ${d}d`]:['',`Vence em ${d}d`]};
+function notify(){
+  if(!me||!('Notification' in window)||Notification.permission!=='granted')return;
+  const hoje=new Date().toDateString();
+  alerts().forEach(t=>{const k='n'+t.id+hoje;if(localStorage.getItem(k))return;localStorage.setItem(k,1);new Notification('Tarefa: '+t.titulo,{body:label(t)[1]+' • '+setor(t.setor)})});
+}
+
+/* ---------- Telas ---------- */
+function render(){
+  const a=$('#app');
+  if(!CID){a.innerHTML=`<div class=box><h2>Configuração inicial</h2><p class=meta>Cole o Client ID criado no Google Cloud Console (veja o passo a passo enviado junto do app).</p><label>Client ID</label><input id=cid placeholder="xxxx.apps.googleusercontent.com"><button class=p onclick="localStorage.setItem('cid',$('#cid').value.trim());CID=$('#cid').value.trim();render()">Salvar</button></div>`;return}
+  if(!ready){a.innerHTML=`<div class=box><h2>Tarefas do Escritório</h2><p class=meta>Conecte a conta Google onde os dados ficam guardados.</p><button class=p onclick="connect()">Conectar ao Google Drive</button><p><button onclick="localStorage.removeItem('cid');CID='';render()">Trocar Client ID</button></p></div>`;return}
+  if(!me){
+    if(!D.users.length){a.innerHTML=`<div class=box><h2>Criar administrador</h2><p class=meta>Primeiro acesso: cadastre o administrador.</p><label>Nome</label><input id=n><label>E-mail</label><input id=e type=email><label>PIN (mín. 4 dígitos)</label><input id=p type=password inputmode=numeric><button class=p onclick="firstAdmin()">Criar e entrar</button></div>`;return}
+    a.innerHTML=`<div class=box><h2>Entrar</h2><label>Usuário</label><select id=u>${D.users.map(u=>`<option value="${u.id}" ${u.id===localStorage.getItem('last')?'selected':''}>${esc(u.nome)}</option>`).join('')}</select><label>PIN</label><input id=p type=password inputmode=numeric onkeydown="if(event.key=='Enter')login()"><button class=p onclick="login()">Entrar</button></div>`;return}
+  const al=alerts(),vis=visible().filter(t=>(!S.fs||t.setor===S.fs)&&(!S.fst||t.status===S.fst)&&(!S.mine||t.resp===me.id)).sort((a,b)=>(a.status==='feito')-(b.status==='feito')||a.venc.localeCompare(b.venc));
+  a.innerHTML=`<div class=wrap><header><h2 style="margin:0">Tarefas</h2><span class=sp></span><span class=meta>${esc(me.nome)}</span><button onclick="sync()">Sincronizar</button><button onclick="me=null;render()">Sair</button></header>
+  <nav><button class="${S.v=='t'?'on':''}" onclick="S.v='t';render()">Tarefas</button>${me.admin?`<button class="${S.v=='a'?'on':''}" onclick="S.v='a';render()">Administração</button>`:''}</nav>
+  ${S.v=='a'&&me.admin?admin():`
+  ${al.length?`<div class=alert><h3>Lembretes de vencimento</h3>${al.map(t=>`<div>${esc(t.titulo)} — ${label(t)[1]}</div>`).join('')}${'Notification' in window&&Notification.permission==='default'?`<p><button onclick="Notification.requestPermission().then(()=>{notify();render()})">Ativar notificações do navegador</button></p>`:''}</div>`:''}
+  <div class=bar><div><label>Setor</label><select onchange="S.fs=this.value;render()"><option value="">Todos</option>${D.setores.map(s=>`<option value="${s.id}" ${S.fs===s.id?'selected':''}>${esc(s.nome)}</option>`).join('')}</select></div>
+  <div><label>Situação</label><select onchange="S.fst=this.value;render()">${[['','Todas'],['aberta','Aberta'],['andamento','Em andamento'],['feito','Concluída']].map(o=>`<option value="${o[0]}" ${S.fst===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select></div>
+  <div><label><input type=checkbox ${S.mine?'checked':''} onchange="S.mine=this.checked;render()">Só as minhas</label></div>
+  <div style="flex:0"><button class=p onclick="taskForm()">Nova tarefa</button></div></div>
+  ${vis.length?vis.map(t=>{const[c,l]=label(t);return`<div class="task ${c}" onclick="taskForm('${t.id}')"><div class=r><strong>${esc(t.titulo)}</strong><span class=tag>${l}</span></div><div class=meta>${esc(setor(t.setor))} • ${esc(user(t.resp))} • ${t.venc.split('-').reverse().join('/')}</div></div>`}).join(''):'<div class=empty>Nenhuma tarefa por aqui. Crie a primeira em “Nova tarefa”.</div>'}`}</div>`;
+}
+function admin(){return`<div class=card><h3>Setores</h3>${D.setores.map(s=>`<div class=row><span>${esc(s.nome)}</span><button class=d onclick="delSetor('${s.id}')">Excluir</button></div>`).join('')||'<p class=meta>Nenhum setor ainda.</p>'}<div style="display:flex;gap:8px;margin-top:10px"><input id=ns placeholder="Nome do setor" style="margin:0"><button class=p onclick="addSetor()">Adicionar</button></div></div>
+<div class=card><h3>Colaboradores</h3>${D.users.map(u=>`<div class=row><span>${esc(u.nome)}${u.admin?' (admin)':''}<br><small class=meta>${esc(u.email||'sem e-mail')} • ${esc(setor(u.setor))}</small></span>${u.id!==me.id?`<span><button onclick="resetPin('${u.id}')">Novo PIN</button> <button class=d onclick="delUser('${u.id}')">Excluir</button></span>`:''}</div>`).join('')}
+<h3 style="margin-top:14px">Novo colaborador</h3><label>Nome</label><input id=un><label>E-mail (recebe os lembretes)</label><input id=ue type=email><label>Setor</label><select id=us><option value="">Sem setor</option>${D.setores.map(s=>`<option value="${s.id}">${esc(s.nome)}</option>`).join('')}</select><label>PIN</label><input id=up type=password inputmode=numeric><label><input type=checkbox id=ua>Administrador</label><br><button class=p onclick="addUser()">Cadastrar</button></div>`}
+
+/* ---------- Ações ---------- */
+async function connect(){try{await getTok();await pull();ready=true;render()}catch(e){alert('Falha ao conectar: '+e.message+'. Confira o Client ID e as origens autorizadas.')}}
+async function firstAdmin(){const n=$('#n').value.trim(),p=$('#p').value;if(!n||p.length<4)return alert('Informe o nome e um PIN de ao menos 4 dígitos.');const u={id:uid(),nome:n,email:$('#e').value.trim(),pin:await sha(p),admin:true,setor:''};await mut(()=>D.users.push(u));me=u;render();notify()}
+async function login(){const u=D.users.find(x=>x.id===$('#u').value);if(u&&u.pin===await sha($('#p').value)){me=u;localStorage.setItem('last',u.id);S.v='t';render();notify()}else alert('PIN incorreto.')}
+async function sync(){try{await pull();me=D.users.find(u=>u.id===me.id)||null}catch(e){alert('Falha ao sincronizar: '+e.message)}render();notify()}
+const addSetor=()=>{const n=$('#ns').value.trim();if(n)mut(()=>D.setores.push({id:uid(),nome:n}))};
+const delSetor=id=>confirm('Excluir este setor?')&&mut(()=>D.setores=D.setores.filter(s=>s.id!==id));
+async function addUser(){const n=$('#un').value.trim(),p=$('#up').value;if(!n||p.length<4)return alert('Informe o nome e um PIN de ao menos 4 dígitos.');const u={id:uid(),nome:n,email:$('#ue').value.trim(),setor:$('#us').value,pin:await sha(p),admin:$('#ua').checked};mut(()=>D.users.push(u))}
+const delUser=id=>confirm('Excluir este colaborador?')&&mut(()=>D.users=D.users.filter(u=>u.id!==id));
+async function resetPin(id){const p=prompt('Novo PIN (mín. 4 dígitos):');if(!p||p.length<4)return;const h=await sha(p);mut(()=>{D.users.find(u=>u.id===id).pin=h})}
+function taskForm(id){
+  const t=D.tarefas.find(x=>x.id===id)||{titulo:'',desc:'',setor:me.setor||'',resp:me.id,venc:'',lembrete:1,status:'aberta'};
+  const op=(arr,sel,f)=>arr.map(x=>`<option value="${x.id}" ${x.id===sel?'selected':''}>${esc(f(x))}</option>`).join('');
+  $('#dlg').innerHTML=`<h3>${id?'Editar tarefa':'Nova tarefa'}</h3><label>Título</label><input id=tt value="${esc(t.titulo)}"><label>Descrição</label><textarea id=td rows=3>${esc(t.desc)}</textarea>
+  <label>Setor</label><select id=ts><option value="">Sem setor</option>${op(D.setores,t.setor,s=>s.nome)}</select>
+  <label>Responsável</label><select id=tr><option value="">Sem responsável</option>${op(D.users,t.resp,u=>u.nome)}</select>
+  <label>Vencimento</label><input id=tv type=date value="${t.venc}">
+  <label>Avisar antes do vencimento</label><select id=tl>${[0,1,2,3,5,7].map(n=>`<option value=${n} ${n==t.lembrete?'selected':''}>${n?n+' dia(s) antes':'No dia'}</option>`).join('')}</select>
+  <label>Situação</label><select id=tst>${[['aberta','Aberta'],['andamento','Em andamento'],['feito','Concluída']].map(o=>`<option value="${o[0]}" ${t.status===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>
+  <label><input type=checkbox id=tc ${t.evId?'checked':''}>Enviar convite no Google Agenda ao responsável (lembrete por e-mail mesmo com o app fechado)</label>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">${id?`<button class=d onclick="delTask('${id}')">Excluir</button>`:''}<button onclick="$('#dlg').close()">Cancelar</button><button class=p onclick="saveTask('${id||''}')">Salvar</button></div>`;
+  $('#dlg').showModal();
+}
+async function saveTask(id){
+  const g=x=>$('#'+x).value,v={titulo:g('tt').trim(),desc:g('td'),setor:g('ts'),resp:g('tr'),venc:g('tv'),lembrete:+g('tl'),status:g('tst')},cal=$('#tc').checked;
+  if(!v.titulo||!v.venc)return alert('Informe o título e o vencimento.');
+  $('#dlg').close();let tid=id;
+  await mut(()=>{let x=D.tarefas.find(k=>k.id===id);if(!x){x={id:uid(),criador:me.id};D.tarefas.push(x)}Object.assign(x,v);tid=x.id});
+  if(cal&&v.resp){try{const x=D.tarefas.find(k=>k.id===tid),ev=await agenda(x);if(ev)await mut(()=>{D.tarefas.find(k=>k.id===tid).evId=ev});else alert('O responsável não tem e-mail cadastrado; convite não enviado.')}catch(e){alert('Tarefa salva, mas o convite na Agenda falhou: '+e.message)}}
+  notify();
+}
+const delTask=id=>{if(!confirm('Excluir esta tarefa?'))return;$('#dlg').close();mut(()=>D.tarefas=D.tarefas.filter(t=>t.id!==id))};
+
+/* ---------- Início ---------- */
+setInterval(async()=>{if(!me||$('#dlg').open)return;try{await pull();render();notify()}catch(e){}},120000);
+render();
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
